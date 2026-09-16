@@ -17,7 +17,7 @@ jobs:
     # 2. Клонируем исходный код GodPotatoBOF во временную папку
     - name: Clone original GodPotatoBOF
       run: |
-        git clone https://github.com gpp-temp
+        git clone https://github.com/incursi0n/GodPotatoBOF gpp-temp
 
     # 3. Настраиваем Python для работы скрипта модификации кода
     - name: Set up Python
