@@ -27,19 +27,20 @@ jobs:
           ls -la
           ls -la common
 
+      - name: Fix boflink permissions
+        run: chmod +x boflink
+
       - name: Build BOF
         run: make
 
       - name: List build artifacts
-        run: ls -la
+        run: ls -la dist
 
       - name: Upload BOF artifacts
         uses: actions/upload-artifact@v4
         with:
           name: GodPotatoBOF
           path: |
-            *.o
-            *.cna
-            common/*.o
-            common/*.cna
+            dist/*.o
+            godpotato.cna
           if-no-files-found: warn
